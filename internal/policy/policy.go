@@ -156,3 +156,7 @@ func (p *Policy) Validate() error {
 func (p *Policy) Marshal() ([]byte, error) {
 	return yaml.Marshal(p)
 }
+
+// ValidRole reports whether name is an acceptable role name. Role names are
+// used to build file paths, so this also rules out path traversal.
+func ValidRole(name string) bool { return roleRe.MatchString(name) }
