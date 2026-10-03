@@ -1,0 +1,20 @@
+role: tester
+description: Runs and writes tests. Cannot change application code.
+filesystem:
+  read:
+    - src/**
+    - tests/**
+    - logs/**
+  write:
+    - tests/**
+commands:
+  allow:
+    - npm
+    - node
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**
+  - production/**
+  - ~/.ssh/**

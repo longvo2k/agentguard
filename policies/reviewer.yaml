@@ -1,0 +1,17 @@
+role: reviewer
+description: Reads code and history. Cannot write anything.
+filesystem:
+  read:
+    - src/**
+    - tests/**
+  write: []
+commands:
+  allow:
+    - git
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**
+  - production/**
+  - ~/.ssh/**

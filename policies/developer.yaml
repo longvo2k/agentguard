@@ -1,0 +1,22 @@
+role: developer
+description: Writes application code and tests. No network.
+filesystem:
+  read:
+    - src/**
+    - tests/**
+    - logs/**
+  write:
+    - src/**
+    - tests/**
+commands:
+  allow:
+    - git
+    - node
+    - npm
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**
+  - production/**
+  - ~/.ssh/**
