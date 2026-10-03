@@ -1,0 +1,26 @@
+# A task-scoped policy with an expiry. After expires_at every request is
+# denied. The metadata fields are the hook for the planned flow where an AI
+# suggests permissions for a task, a human approves them, and the policy
+# expires on its own. Only expires_at is enforced today.
+role: fix-issue-142
+description: Fix the date parsing bug in src/utils/date.js.
+metadata:
+  source: suggested-by-ai
+  approved_by: alice@example.com
+  expires_at: 2026-12-31T18:00:00Z
+filesystem:
+  read:
+    - src/utils/**
+    - tests/utils/**
+  write:
+    - src/utils/date.js
+    - tests/utils/date.test.js
+commands:
+  allow:
+    - node
+    - npm
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**

@@ -342,6 +342,8 @@ func printPlan(w io.Writer, p *sandbox.Plan) {
 			fmt.Fprintf(w, "  mount %-2s %-34s (%s)\n", mode, m.Target, m.Note)
 		case "hide":
 			fmt.Fprintf(w, "  hide     %-34s (%s)\n", m.Target, m.Note)
+		case "protect":
+			fmt.Fprintf(w, "  mount ro %-34s (%s)\n", m.Target, m.Note)
 		}
 	}
 	fmt.Fprintf(w, "  PATH: %s\n\n", strings.Join(p.Engine.Policy().Commands.Allow, " "))

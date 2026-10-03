@@ -1,0 +1,21 @@
+# A narrowly scoped role that may reach the network to install packages.
+# Network access is all-or-nothing in v0.1 (no domain allowlist yet), so
+# keep roles like this short-lived and separate from code-writing roles.
+role: dependency-installer
+description: Runs npm install with network access. Cannot touch src/.
+filesystem:
+  read:
+    - ./package.json
+    - ./package-lock.json
+  write:
+    - node_modules/**
+    - ./package-lock.json
+commands:
+  allow:
+    - node
+    - npm
+network:
+  enabled: true
+deny:
+  - .env*
+  - secrets/**

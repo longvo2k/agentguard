@@ -1,0 +1,20 @@
+# A role that edits documentation only. It can read source code for context
+# but cannot change it, and it runs nothing but node (for doc generators).
+role: docs-writer
+description: Edits docs/ and README; reads src/ for reference.
+filesystem:
+  read:
+    - src/**
+    - docs/**
+    - ./README.md
+  write:
+    - docs/**
+    - ./README.md
+commands:
+  allow:
+    - node
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**
