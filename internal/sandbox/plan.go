@@ -191,6 +191,9 @@ func (p *Plan) planWorkspace() error {
 		abs := filepath.Join(root, c.rel)
 		fi, err := os.Lstat(abs)
 		if errors.Is(err, fs.ErrNotExist) {
+			if c.rel == ".git" {
+				continue // implicit grant for git; not every workspace is a repo
+			}
 			p.warn("%s does not exist, so it is not mounted (pattern %q)", c.rel, c.pattern)
 			continue
 		}

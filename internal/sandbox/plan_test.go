@@ -180,7 +180,7 @@ func TestDockerArgsAreLockedDown(t *testing.T) {
 	for _, want := range []string{
 		"run --rm", "--network none", "--cap-drop ALL", "--security-opt no-new-privileges",
 		"--read-only", "--pull=never", "--pids-limit 128", "--memory 512m",
-		"PATH=" + ShimDir, "HOME=" + HomeDir, "--entrypoint " + ShimDir + "/npm agentguard-sandbox:test test",
+		"PATH=" + ShimDir, "HOME=" + HomeDir, "npm_config_script_shell=/bin/sh", "--entrypoint " + ShimDir + "/npm agentguard-sandbox:test test",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("docker args missing %q", want)

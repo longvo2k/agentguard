@@ -62,6 +62,12 @@ func (p *Plan) DockerArgs(argv []string, tty bool) []string {
 		"--env", "GIT_CONFIG_KEY_0=safe.directory",
 		"--env", "GIT_CONFIG_VALUE_0=" + WorkspaceDir,
 	}
+	if _, ok := o.CommandPaths["npm"]; ok {
+		// npm runs package scripts through a shell, which is not on PATH.
+		// Allowing npm therefore allows its scripts to use /bin/sh (with the
+		// same restricted PATH). This is documented as a known limitation.
+		args = append(args, "--env", "npm_config_script_shell=/bin/sh")
+	}
 	if p.Network {
 		args = append(args, "--network", "bridge")
 	} else {

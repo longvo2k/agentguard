@@ -144,8 +144,18 @@ func (e *Engine) Policy() *Policy { return e.policy }
 // Root returns the absolute, symlink-resolved workspace root.
 func (e *Engine) Root() string { return e.root }
 
-// Evaluate decides whether the role may perform action on resource.
+// Evaluate decides whether the role may perform action on resource and
+// reports the decision to the observer.
 func (e *Engine) Evaluate(action Action, resource string) Decision {
+	d := e.Check(action, resource)
+	if e.observer != nil {
+		e.observer(d)
+	}
+	return d
+}
+
+// Check is Evaluate without notifying the observer.
+func (e *Engine) Check(action Action, resource string) Decision {
 	var d Decision
 	switch action {
 	case ActionRead, ActionWrite:
@@ -165,9 +175,6 @@ func (e *Engine) Evaluate(action Action, resource string) Decision {
 	d.Role = e.policy.Role
 	d.Action = action
 	d.Resource = resource
-	if e.observer != nil {
-		e.observer(d)
-	}
 	return d
 }
 
@@ -249,7 +256,7 @@ func (e *Engine) matchHostDeny(real string, d *Decision) bool {
 }
 
 // checkRel applies the rule order to a workspace-relative path:
-// protected dirs, built-in sensitive files, deny rules, then allow rules.
+// protected dirs, deny rules, built-in sensitive files, then allow rules.
 func (e *Engine) checkRel(action Action, rel string) Decision {
 	d := Decision{Path: rel}
 	segs := splitPath(filepath.ToSlash(rel))
@@ -265,15 +272,15 @@ func (e *Engine) checkRel(action Action, rel string) Decision {
 			}
 		}
 	}
+	if r, ok := firstMatch(e.deny, segs, true); ok {
+		d.Reason, d.Rule = "matches deny rule", r.label
+		return d
+	}
 	if r, ok := firstMatch(e.sensitive, segs, true); ok {
 		if _, safe := firstMatch(e.safe, segs, true); !safe {
 			d.Reason, d.Rule = "built-in sensitive file", r.label
 			return d
 		}
-	}
-	if r, ok := firstMatch(e.deny, segs, true); ok {
-		d.Reason, d.Rule = "matches deny rule", r.label
-		return d
 	}
 	allow := e.write
 	if action == ActionRead {
@@ -295,13 +302,13 @@ func (e *Engine) IsHidden(rel string) (bool, string) {
 	if len(segs) > 0 && strings.EqualFold(segs[0], ProtectedDir) {
 		return true, "protected: .agentguard/**"
 	}
+	if r, ok := firstMatch(e.deny, segs, true); ok {
+		return true, r.label
+	}
 	if r, ok := firstMatch(e.sensitive, segs, true); ok {
 		if _, safe := firstMatch(e.safe, segs, true); !safe {
 			return true, r.label
 		}
-	}
-	if r, ok := firstMatch(e.deny, segs, true); ok {
-		return true, r.label
 	}
 	if !e.matchHostDeny(filepath.Join(e.root, rel), &Decision{}) {
 		return true, "deny (absolute)"
