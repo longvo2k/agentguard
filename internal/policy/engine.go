@@ -81,6 +81,9 @@ type Engine struct {
 
 // NewEngine compiles a policy for the workspace rooted at root.
 func NewEngine(p *Policy, root string) (*Engine, error) {
+	if p == nil {
+		return nil, errors.New("no policy")
+	}
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}

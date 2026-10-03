@@ -87,6 +87,9 @@ type Workspace struct {
 // Dir returns the .agentguard directory.
 func (w *Workspace) Dir() string { return filepath.Join(w.Root, DirName) }
 
+// CacheDir holds derived data such as resolved command paths per image.
+func (w *Workspace) CacheDir() string { return filepath.Join(w.Dir(), "cache") }
+
 // AuditPath returns the audit log file path.
 func (w *Workspace) AuditPath() string { return filepath.Join(w.Dir(), w.Config.AuditLog) }
 
