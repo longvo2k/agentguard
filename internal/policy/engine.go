@@ -260,17 +260,13 @@ func (e *Engine) matchHostDeny(real string, d *Decision) bool {
 func (e *Engine) checkRel(action Action, rel string) Decision {
 	d := Decision{Path: rel}
 	segs := splitPath(filepath.ToSlash(rel))
-	if len(segs) > 0 && strings.EqualFold(segs[0], ProtectedDir) {
+	if hasComponent(segs, ProtectedDir) {
 		d.Reason, d.Rule = "AgentGuard configuration is never accessible to agents", "protected: .agentguard/**"
 		return d
 	}
-	if action == ActionWrite {
-		for _, s := range segs {
-			if strings.EqualFold(s, ".git") {
-				d.Reason, d.Rule = "git metadata is never writable (hooks and config execute on the host)", "protected: .git/** (write)"
-				return d
-			}
-		}
+	if action == ActionWrite && hasComponent(segs, ".git") {
+		d.Reason, d.Rule = "git metadata is never writable (hooks and config execute on the host)", "protected: .git/** (write)"
+		return d
 	}
 	if r, ok := firstMatch(e.deny, segs, true); ok {
 		d.Reason, d.Rule = "matches deny rule", r.label
@@ -299,7 +295,7 @@ func (e *Engine) checkRel(action Action, rel string) Decision {
 // regardless of allow rules. It does not notify the observer.
 func (e *Engine) IsHidden(rel string) (bool, string) {
 	segs := splitPath(filepath.ToSlash(rel))
-	if len(segs) > 0 && strings.EqualFold(segs[0], ProtectedDir) {
+	if hasComponent(segs, ProtectedDir) {
 		return true, "protected: .agentguard/**"
 	}
 	if r, ok := firstMatch(e.deny, segs, true); ok {
@@ -314,6 +310,18 @@ func (e *Engine) IsHidden(rel string) (bool, string) {
 		return true, "deny (absolute)"
 	}
 	return false, ""
+}
+
+// hasComponent reports whether any path segment equals name, ignoring case.
+// Protected names apply at every depth so an agent cannot plant, say, a
+// nested .agentguard/ that a later run would pick up.
+func hasComponent(segs []string, name string) bool {
+	for _, s := range segs {
+		if strings.EqualFold(s, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstMatch(rules []rule, segs []string, fold bool) (rule, bool) {

@@ -225,6 +225,7 @@ func sandboxSection(ctx context.Context, out io.Writer, ws *config.Workspace, e 
 		Memory:       ws.Config.Sandbox.Memory,
 		CPUs:         ws.Config.Sandbox.CPUs,
 		PidsLimit:    ws.Config.Sandbox.PidsLimit,
+		User:         ws.Config.Sandbox.User,
 		CommandPaths: cmds,
 		Record:       logger.Observer("sandbox"),
 	})

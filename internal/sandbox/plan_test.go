@@ -337,3 +337,24 @@ func TestContainerUser(t *testing.T) {
 		t.Errorf("default user %d:%d %v", uid, gid, err)
 	}
 }
+
+func TestGitInsideWritableMountIsReadOnly(t *testing.T) {
+	root := demoWorkspace(t)
+	writeFiles(t, root, map[string]string{"src/vendor/lib/.git": "gitdir: ../../../.git/modules/lib\n"})
+	plan, _ := newPlan(t, "role: broad\nfilesystem:\n  write: ['**']\n", root, Options{})
+	m := mountByTarget(plan)
+	if mt, ok := m["/workspace"]; !ok || mt.ReadOnly {
+		t.Fatalf("expected writable root mount, got %+v", mt)
+	}
+	for _, target := range []string{"/workspace/.git", "/workspace/src/vendor/lib/.git"} {
+		if mt, ok := m[target]; !ok || !mt.ReadOnly || mt.Kind != "protect" {
+			t.Errorf("%s should be re-mounted read-only, got %+v", target, mt)
+		}
+	}
+	if mt := m["/workspace/.git/config"]; mt.Kind != "hide" {
+		t.Errorf(".git/config should still be sanitized, got %+v", mt)
+	}
+	if mt := m["/workspace/.agentguard"]; mt.Kind != "hide" {
+		t.Errorf(".agentguard should be hidden, got %+v", mt)
+	}
+}

@@ -274,6 +274,7 @@ func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, erro
 		Memory:    ws.Config.Sandbox.Memory,
 		CPUs:      ws.Config.Sandbox.CPUs,
 		PidsLimit: ws.Config.Sandbox.PidsLimit,
+		User:      ws.Config.Sandbox.User,
 		Record:    logger.Observer("sandbox"),
 	}
 	if !*dryRun {

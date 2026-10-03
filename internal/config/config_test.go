@@ -131,3 +131,18 @@ func TestBuiltinPolicy(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestFindRefusesNestedWorkspaces(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Init(root, false); err != nil {
+		t.Fatal(err)
+	}
+	// An agent with write access to src/ plants its own permissive policy.
+	planted := filepath.Join(root, "src")
+	if err := os.MkdirAll(filepath.Join(planted, ".agentguard"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Find(planted); err == nil {
+		t.Fatal("nested .agentguard was accepted")
+	}
+}

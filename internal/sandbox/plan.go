@@ -252,7 +252,7 @@ func (p *Plan) planWorkspace() error {
 			Note:     "pattern " + c.pattern,
 		})
 		p.record(actionFor(c.write), mountLabel(c.rel), true, patternRule(c), "mounted "+map[bool]string{true: "read-write", false: "read-only"}[c.write])
-		if err := p.planHides(c.rel, hides); err != nil {
+		if err := p.planHides(c.rel, c.write, hides); err != nil {
 			return err
 		}
 	}
@@ -263,7 +263,7 @@ func (p *Plan) planWorkspace() error {
 }
 
 // planHides walks a mounted path and hides every entry the policy denies.
-func (p *Plan) planHides(rel string, done map[string]bool) error {
+func (p *Plan) planHides(rel string, writable bool, done map[string]bool) error {
 	e := p.Engine
 	root := e.Root()
 	start := filepath.Join(root, rel)
@@ -291,6 +291,16 @@ func (p *Plan) planHides(rel string, done map[string]bool) error {
 			// where only mounted (allowed) paths and placeholders exist, so a
 			// link cannot reach a hidden or host file. Mounting over one would
 			// follow it, so links are left alone.
+			return nil
+		case writable && strings.EqualFold(d.Name(), ".git") && (d.IsDir() || mode.IsRegular()) && !hidden:
+			// git metadata inside a writable mount is re-mounted read-only:
+			// hooks and config written by an agent would run on the host.
+			target := containerPath(r)
+			if !done[target] {
+				done[target] = true
+				p.Mounts = append(p.Mounts, Mount{Source: abs, Target: target, ReadOnly: true, Kind: "protect", Note: "protected: .git/** (write)"})
+				p.record(policy.ActionWrite, r, false, "protected: .git/** (write)", "mounted read-only in sandbox")
+			}
 			return nil
 		case hidden:
 			if err := p.hide(abs, d.IsDir(), rule, done); err != nil {

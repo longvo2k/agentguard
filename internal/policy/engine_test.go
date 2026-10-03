@@ -150,6 +150,7 @@ func TestBuiltinSensitiveFiles(t *testing.T) {
 		{ActionRead, ".agentguard/config.yaml", false},
 		{ActionWrite, ".agentguard/policies/careless.yaml", false},
 		{ActionRead, ".AgentGuard/config.yaml", false},
+		{ActionWrite, "src/.agentguard/policies/careless.yaml", false},
 	})
 
 	// allow_sensitive is an explicit, narrow opt-out.

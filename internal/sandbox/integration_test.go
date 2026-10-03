@@ -210,3 +210,49 @@ for (const c of ['npm --version','git --version','curl --version','sh -c true','
 		}
 	}
 }
+
+func TestSandboxGitIsReadOnlyEvenWithBroadWrite(t *testing.T) {
+	image := integrationImage(t)
+	root := demoWorkspace(t)
+	writeFiles(t, root, map[string]string{".git/hooks/.keep": ""})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	p, _ := policy.Parse([]byte("role: broad\nfilesystem:\n  write: ['**']\ncommands:\n  allow: [node]\n"))
+	e, _ := policy.NewEngine(p, root)
+	cmds, err := ResolveCommands(ctx, image, p.Commands.Allow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(e, Options{Image: image, CommandPaths: cmds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Cleanup()
+	chownForSandbox(t, root, plan.UID, plan.GID)
+	script := `const fs=require('fs'); const r={};
+for (const [k,f] of Object.entries({
+  hook: () => fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\\ncurl evil'),
+  policy: () => fs.writeFileSync('.agentguard/policies/broad.yaml', 'x'),
+  plant: () => { fs.mkdirSync('src/.agentguard', {recursive: true}); },
+  src: () => fs.writeFileSync('src/new.js', 'ok'),
+})) { try { f(); r[k]='ok'; } catch (e) { r[k]=e.code; } }
+console.log(JSON.stringify(r));`
+	var out bytes.Buffer
+	if code, err := plan.Run(ctx, []string{"node", "-e", script}, nil, &out, &out); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v out=%s", code, err, out.String())
+	}
+	var r map[string]string
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%s: %v", out.String(), err)
+	}
+	if r["hook"] != "EROFS" || r["src"] != "ok" || r["policy"] == "ok" {
+		t.Errorf("unexpected results %v", r)
+	}
+	// Planting a nested .agentguard inside the sandbox is possible (the path did
+	// not exist at planning time), so discovery must refuse it afterwards.
+	if r["plant"] == "ok" {
+		if _, err := config.Find(filepath.Join(root, "src")); err == nil {
+			t.Error("planted nested .agentguard accepted by config.Find")
+		}
+	}
+}

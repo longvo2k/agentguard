@@ -40,6 +40,9 @@ type Sandbox struct {
 	Memory    string `yaml:"memory"`
 	CPUs      string `yaml:"cpus"`
 	PidsLimit int    `yaml:"pids_limit"`
+	// User is an optional uid:gid for the container (never 0). Default: the
+	// invoking user, or 1000:1000 when agentguard runs as root.
+	User string `yaml:"user,omitempty"`
 }
 
 // Default returns the configuration written by `agentguard init`.
@@ -134,16 +137,27 @@ func Find(start string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Collect every .agentguard/ up to the filesystem root. More than one is
+	// refused: an agent with write access to a subdirectory could otherwise
+	// plant its own policy there for a later run to pick up.
+	var found []string
 	for {
-		cfgPath := filepath.Join(dir, DirName, "config.yaml")
-		if _, err := os.Stat(cfgPath); err == nil {
-			return Open(dir)
+		if fi, err := os.Lstat(filepath.Join(dir, DirName)); err == nil && fi.IsDir() {
+			found = append(found, dir)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return nil, ErrNotInitialized
+			break
 		}
 		dir = parent
+	}
+	switch len(found) {
+	case 0:
+		return nil, ErrNotInitialized
+	case 1:
+		return Open(found[0])
+	default:
+		return nil, fmt.Errorf("found nested %s directories in %s and %s; refusing to guess which policy applies (remove the one you did not create)", DirName, found[0], found[1])
 	}
 }
 
