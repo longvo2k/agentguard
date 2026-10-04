@@ -111,7 +111,7 @@ func (p *Plan) Run(ctx context.Context, argv []string, stdin io.Reader, stdout, 
 	if d := p.Engine.Evaluate(policy.ActionExecute, argv[0]); !d.Allowed {
 		return 126, fmt.Errorf("%w: %s (%s)", ErrCommandDenied, argv[0], d.Reason)
 	}
-	cmd := exec.CommandContext(ctx, "docker", p.DockerArgs(argv, isTerminal(stdin) && isTerminal(stdout))...)
+	cmd := exec.CommandContext(ctx, "docker", p.DockerArgs(argv, IsTerminal(stdin) && IsTerminal(stdout))...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Env = dockerEnv()
 	err := cmd.Run()
@@ -141,27 +141,49 @@ func Available(ctx context.Context) error {
 	return nil
 }
 
-// EnsureImage makes sure image exists locally. The default image is built
-// from the embedded Dockerfile; other images must already be present.
-func EnsureImage(ctx context.Context, image string, buildable bool, log io.Writer) error {
-	inspect := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image)
-	inspect.Env = dockerEnv()
-	if err := inspect.Run(); err == nil {
-		return nil
+// EnsureImage makes sure image is available locally and returns the
+// reference to run. A missing image is pulled. If that fails and fallback is
+// set, the embedded Dockerfile is built once, tagged fallback, and fallback
+// is returned instead.
+func EnsureImage(ctx context.Context, image, fallback string, log io.Writer) (string, error) {
+	if ImageExists(ctx, image) {
+		return image, nil
 	}
-	if !buildable {
-		return fmt.Errorf("sandbox image %q not found locally; pull or build it first", image)
+	fmt.Fprintf(log, "Pulling sandbox image %s (first run only)...\n", image)
+	pull := exec.CommandContext(ctx, "docker", "pull", "--quiet", image)
+	pull.Env = dockerEnv()
+	pullOut, pullErr := pull.CombinedOutput()
+	if pullErr == nil {
+		return image, nil
 	}
-	fmt.Fprintf(log, "Building sandbox image %s (first run only)...\n", image)
-	build := exec.CommandContext(ctx, "docker", "build", "--quiet", "-t", image, "-")
+	if fallback == "" {
+		return "", fmt.Errorf("sandbox image %q is not available: %s", image, strings.TrimSpace(string(pullOut)))
+	}
+	if ImageExists(ctx, fallback) {
+		return fallback, nil
+	}
+	fmt.Fprintf(log, "Pull failed (%s); building %s from the built-in Dockerfile instead...\n", firstLine(pullOut), fallback)
+	build := exec.CommandContext(ctx, "docker", "build", "--quiet", "-t", fallback, "-")
 	build.Env = dockerEnv()
 	build.Stdin = bytes.NewReader(dockerfile)
 	var out bytes.Buffer
 	build.Stdout, build.Stderr = &out, &out
 	if err := build.Run(); err != nil {
-		return fmt.Errorf("building %s failed: %v\n%s", image, err, out.String())
+		return "", fmt.Errorf("pulling %s failed and building %s failed: %v\n%s", image, fallback, err, out.String())
 	}
-	return nil
+	return fallback, nil
+}
+
+// ImageExists reports whether image is present locally.
+func ImageExists(ctx context.Context, image string) bool {
+	inspect := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image)
+	inspect.Env = dockerEnv()
+	return inspect.Run() == nil
+}
+
+func firstLine(b []byte) string {
+	s, _, _ := strings.Cut(strings.TrimSpace(string(b)), "\n")
+	return s
 }
 
 // dockerEnv is the environment for the docker CLI itself (not the
@@ -169,7 +191,8 @@ func EnsureImage(ctx context.Context, image string, buildable bool, log io.Write
 // the container environment is built explicitly in DockerArgs.
 func dockerEnv() []string { return os.Environ() }
 
-func isTerminal(v any) bool {
+// IsTerminal reports whether v is an *os.File attached to a terminal.
+func IsTerminal(v any) bool {
 	f, ok := v.(*os.File)
 	if !ok {
 		return false

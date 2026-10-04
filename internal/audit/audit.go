@@ -25,7 +25,8 @@ type Entry struct {
 	Role      string    `json:"role"`
 	Action    string    `json:"action"`
 	Resource  string    `json:"resource"`
-	Decision  string    `json:"decision"` // "allow" or "deny"
+	Path      string    `json:"path,omitempty"` // workspace-relative, for filesystem actions
+	Decision  string    `json:"decision"`       // "allow" or "deny"
 	Reason    string    `json:"reason,omitempty"`
 	Rule      string    `json:"rule,omitempty"`
 	Source    string    `json:"source,omitempty"` // check, run, sandbox, demo
@@ -42,11 +43,21 @@ func FromDecision(d policy.Decision, source string) Entry {
 		Role:      d.Role,
 		Action:    string(d.Action),
 		Resource:  d.Resource,
+		Path:      d.Path,
 		Decision:  verdict,
 		Reason:    d.Reason,
 		Rule:      d.Rule,
 		Source:    source,
 	}
+}
+
+// Display is the resource as shown to people: the workspace-relative path
+// when known, otherwise what was requested.
+func (e Entry) Display() string {
+	if e.Path != "" && e.Path != e.Resource {
+		return e.Path
+	}
+	return e.Resource
 }
 
 // Logger appends entries to a JSONL file.
@@ -166,7 +177,7 @@ func Summarize(entries []Entry) Summary {
 			idx = 0
 		} else {
 			s.Denied++
-			denied[e.Action+" "+e.Resource]++
+			denied[e.Action+" "+e.Display()]++
 		}
 		r := s.ByRole[e.Role]
 		r[idx]++
@@ -228,7 +239,7 @@ func Print(w io.Writer, entries []Entry, tail int) {
 			if e.Decision != "allow" {
 				mark = "✗"
 			}
-			line := fmt.Sprintf("  %s %s  %-10s %-8s %s", mark, e.Timestamp.Local().Format("15:04:05"), e.Role, e.Action, e.Resource)
+			line := fmt.Sprintf("  %s %s  %-10s %-8s %s", mark, e.Timestamp.Local().Format("15:04:05"), e.Role, e.Action, e.Display())
 			if e.Decision != "allow" && e.Reason != "" {
 				line += "  (" + e.Reason + ")"
 			}

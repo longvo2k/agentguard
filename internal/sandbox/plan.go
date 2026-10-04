@@ -292,14 +292,16 @@ func (p *Plan) planHides(rel string, writable bool, done map[string]bool) error 
 			// link cannot reach a hidden or host file. Mounting over one would
 			// follow it, so links are left alone.
 			return nil
-		case writable && strings.EqualFold(d.Name(), ".git") && (d.IsDir() || mode.IsRegular()) && !hidden:
-			// git metadata inside a writable mount is re-mounted read-only:
-			// hooks and config written by an agent would run on the host.
+		case writable && isWriteProtected(d.Name()) && (d.IsDir() || mode.IsRegular()) && !hidden:
+			// git metadata and agent settings inside a writable mount are
+			// re-mounted read-only: hooks and config written by an agent would
+			// run on the host, or switch AgentGuard's hook off.
 			target := containerPath(r)
+			rule := "protected: " + strings.ToLower(d.Name()) + "/** (write)"
 			if !done[target] {
 				done[target] = true
-				p.Mounts = append(p.Mounts, Mount{Source: abs, Target: target, ReadOnly: true, Kind: "protect", Note: "protected: .git/** (write)"})
-				p.record(policy.ActionWrite, r, false, "protected: .git/** (write)", "mounted read-only in sandbox")
+				p.Mounts = append(p.Mounts, Mount{Source: abs, Target: target, ReadOnly: true, Kind: "protect", Note: rule})
+				p.record(policy.ActionWrite, r, false, rule, "mounted read-only in sandbox")
 			}
 			return nil
 		case hidden:
@@ -468,6 +470,10 @@ func containerUser(override string) (int, int, error) {
 		gid = uid
 	}
 	return uid, gid, nil
+}
+
+func isWriteProtected(name string) bool {
+	return strings.EqualFold(name, ".git") || strings.EqualFold(name, ".claude")
 }
 
 func actionFor(write bool) policy.Action {

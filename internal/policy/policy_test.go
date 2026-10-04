@@ -45,8 +45,8 @@ func TestParseAcceptsAbsoluteDeny(t *testing.T) {
 
 func TestBuiltinPoliciesAreValid(t *testing.T) {
 	files, err := fs.Glob(agentguard.BuiltinPolicies, "policies/*.yaml")
-	if err != nil || len(files) != 3 {
-		t.Fatalf("expected 3 built-in policies, got %v (%v)", files, err)
+	if err != nil || len(files) != 4 {
+		t.Fatalf("expected 4 built-in policies, got %v (%v)", files, err)
 	}
 	for _, f := range files {
 		data, _ := agentguard.BuiltinPolicies.ReadFile(f)

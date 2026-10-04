@@ -1,0 +1,58 @@
+role: agent
+description: >-
+  Default for AI coding agents in any project. Reads and edits the whole
+  project except secrets, runs common development tools, no network.
+filesystem:
+  read:
+    - "**"
+  write:
+    - "**"
+commands:
+  allow:
+    # languages and package managers
+    - node
+    - npm
+    - npx
+    - pnpm
+    - yarn
+    - python
+    - python3
+    - pip
+    - pytest
+    - go
+    - cargo
+    - rustc
+    - make
+    - tsc
+    # version control (.git is read-only; commits happen outside the agent)
+    - git
+    # reading and searching
+    - ls
+    - cat
+    - head
+    - tail
+    - wc
+    - grep
+    - rg
+    - find
+    - sort
+    - uniq
+    - diff
+    - sed
+    - awk
+    - jq
+    - tree
+    # file changes
+    - mkdir
+    - touch
+    - cp
+    - mv
+    - rm
+network:
+  enabled: false
+deny:
+  - .env*
+  - secrets/**
+  - production/**
+  - ~/.ssh/**
+  - ~/.aws/**

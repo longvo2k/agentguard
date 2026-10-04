@@ -320,6 +320,8 @@ func TestGitImplicitReadOnly(t *testing.T) {
 		{ActionWrite, ".git/HEAD", false},
 		{ActionWrite, ".git/hooks/post-checkout", false},
 		{ActionWrite, "src/vendor/.git/config", false},
+		{ActionWrite, ".claude/settings.json", false},
+		{ActionWrite, "src/.claude/settings.local.json", false},
 		{ActionRead, ".git/config", false}, // may hold tokens
 	})
 	// Without git, .git is not readable at all.

@@ -268,6 +268,10 @@ func (e *Engine) checkRel(action Action, rel string) Decision {
 		d.Reason, d.Rule = "git metadata is never writable (hooks and config execute on the host)", "protected: .git/** (write)"
 		return d
 	}
+	if action == ActionWrite && hasComponent(segs, ".claude") {
+		d.Reason, d.Rule = "agent configuration is never writable (it could disable AgentGuard's hook)", "protected: .claude/** (write)"
+		return d
+	}
 	if r, ok := firstMatch(e.deny, segs, true); ok {
 		d.Reason, d.Rule = "matches deny rule", r.label
 		return d

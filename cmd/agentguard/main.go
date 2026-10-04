@@ -27,10 +27,14 @@ var version = "0.1.0-dev"
 const usage = `AgentGuard: give AI agents only the access they need.  (experimental MVP)
 
 Usage:
-  agentguard init [--force]                      create .agentguard/ with example policies
+  agentguard setup [--yes]                       one-time setup: user policies, image, agent hooks
+  agentguard doctor                              check that everything is in place
+  agentguard init [--force]                      create .agentguard/ for this project only
+  agentguard trust [--revoke]                    approve this project's .agentguard/ policies
   agentguard check [--role R] <action> [path]    ask the policy engine (exit 0 allow, 1 deny)
   agentguard run [--role R] -- <command> [args]  run a command in a least-privilege sandbox
   agentguard audit [--tail N] [--json]           summarize logged decisions
+  agentguard hook claude                         Claude Code PreToolUse hook (installed by setup)
   agentguard demo [--keep] [--no-docker]         see it work in 30 seconds
   agentguard version
 
@@ -50,6 +54,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var err error
 	code := 0
 	switch cmd {
+	case "setup":
+		err = cmdSetup(rest, stdin, stdout)
+	case "doctor":
+		code, err = cmdDoctor(rest, stdout)
+	case "trust":
+		err = cmdTrust(rest, stdout)
+	case "hook":
+		code = cmdHook(rest, stdin, stdout, stderr)
 	case "init":
 		err = cmdInit(rest, stdout)
 	case "check":
@@ -138,22 +150,31 @@ func cmdInit(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "%s/ already exists; nothing changed (use --force to overwrite)\n", config.DirName)
 		return nil
 	}
+	// The user just created these policies, so they are trusted as written.
+	if err := config.Trust(cwd); err != nil {
+		return err
+	}
 	fmt.Fprintln(out, "Created:")
 	for _, w := range written {
 		rel, _ := filepath.Rel(cwd, w)
 		fmt.Fprintln(out, "  "+rel)
 	}
-	fmt.Fprintf(out, "\nNext:\n  agentguard check read .env\n  agentguard run --role developer -- npm test\n\nEdit %s/policies/*.yaml to change what each role may do.\n", config.DirName)
+	fmt.Fprintf(out, "\nNext:\n  agentguard check read .env\n  agentguard run --role developer -- npm test\n\nEdit %s/policies/*.yaml to change what each role may do,\nthen run `agentguard trust` to approve the change.\n", config.DirName)
 	return nil
 }
 
-// load opens the workspace and builds an engine whose decisions are audited.
+// load opens the workspace for the current directory and builds an engine
+// whose decisions are audited.
 func load(role string, source string) (*config.Workspace, *policy.Engine, *audit.Logger, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ws, err := config.Find(cwd)
+	return loadAt(cwd, role, source)
+}
+
+func loadAt(dir, role, source string) (*config.Workspace, *policy.Engine, *audit.Logger, error) {
+	ws, err := config.Find(dir)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -264,7 +285,7 @@ func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, erro
 		return 126, fmt.Errorf("%s: %s", argv[0], d.Reason)
 	}
 
-	img := ws.Config.Sandbox.Image
+	img := ws.Config.Image()
 	if *image != "" {
 		img = *image
 	}
@@ -281,9 +302,11 @@ func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) (int, erro
 		if err := sandbox.Available(ctx); err != nil {
 			return 1, err
 		}
-		if err := sandbox.EnsureImage(ctx, img, img == config.DefaultImage, stderr); err != nil {
+		img, err = sandbox.EnsureImage(ctx, img, fallbackFor(img), stderr)
+		if err != nil {
 			return 1, err
 		}
+		opts.Image = img
 		opts.CommandPaths, err = sandbox.ResolveCommands(ctx, img, e.Policy().Commands.Allow, ws.CacheDir())
 		if err != nil {
 			return 1, err
@@ -419,4 +442,13 @@ func cmdDemo(args []string, out io.Writer) error {
 		return usagef("unexpected argument %q", pos[0])
 	}
 	return demo.Run(context.Background(), demo.Options{Out: out, Keep: *keep, NoDocker: *noDocker, Image: *image})
+}
+
+// fallbackFor returns the local image to build when img cannot be pulled:
+// only the official image has a built-in Dockerfile to fall back on.
+func fallbackFor(img string) string {
+	if config.IsDefaultImage(img) {
+		return config.LocalImage
+	}
+	return ""
 }

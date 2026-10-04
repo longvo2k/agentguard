@@ -60,15 +60,17 @@ func integrationImage(t *testing.T) string {
 		t.Skipf("Docker not available: %v", err)
 	}
 	if img := os.Getenv("AGENTGUARD_TEST_IMAGE"); img != "" {
-		if err := EnsureImage(ctx, img, false, os.Stderr); err != nil {
+		ref, err := EnsureImage(ctx, img, "", os.Stderr)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return img
+		return ref
 	}
-	if err := EnsureImage(ctx, config.DefaultImage, true, os.Stderr); err != nil {
+	ref, err := EnsureImage(ctx, config.DefaultImage(), config.LocalImage, os.Stderr)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return config.DefaultImage
+	return ref
 }
 
 // chownForSandbox makes the workspace writable by the sandbox uid when the

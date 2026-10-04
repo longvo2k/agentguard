@@ -99,7 +99,7 @@ func Run(ctx context.Context, opts Options) error {
 	} else {
 		image := opts.Image
 		if image == "" {
-			image = ws.Config.Sandbox.Image
+			image = ws.Config.Image()
 		}
 		ok, err := sandboxSection(ctx, out, ws, engine, logger, image)
 		if err != nil {
@@ -212,7 +212,12 @@ var errnoText = map[string]string{
 
 func sandboxSection(ctx context.Context, out io.Writer, ws *config.Workspace, e *policy.Engine, logger *audit.Logger, image string) (bool, error) {
 	fmt.Fprintf(out, "\n2. Sandbox enforcement (a real Docker container, image %s)\n", image)
-	if err := sandbox.EnsureImage(ctx, image, image == config.DefaultImage, out); err != nil {
+	fallback := ""
+	if config.IsDefaultImage(image) {
+		fallback = config.LocalImage
+	}
+	image, err := sandbox.EnsureImage(ctx, image, fallback, out)
+	if err != nil {
 		return false, err
 	}
 	cmds, err := sandbox.ResolveCommands(ctx, image, e.Policy().Commands.Allow, ws.CacheDir())
