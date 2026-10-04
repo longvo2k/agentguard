@@ -1,0 +1,60 @@
+# Release configuration. Run by .github/workflows/release.yml on a v* tag.
+# Local dry run: goreleaser release --snapshot --clean
+version: 2
+project_name: agentguard
+
+builds:
+  - id: agentguard
+    main: ./cmd/agentguard
+    binary: agentguard
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      # Pins the sandbox image built by the same release (empty in local builds).
+      - -X github.com/longvo2k/agentguard/internal/config.imageDigest={{ index .Env "IMAGE_DIGEST" }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:"]
+
+homebrew_casks:
+  - name: agentguard
+    repository:
+      owner: longvo2k
+      name: homebrew-tap
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+    # No tap token configured yet: build the cask but do not publish it.
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    homepage: https://github.com/longvo2k/agentguard
+    description: Least-privilege sandboxing for AI coding agents
+    license: MIT
+    commit_author:
+      name: agentguard-release
+      email: noreply@github.com
+    caveats: |
+      Run `agentguard setup` once to install user policies and the Claude Code hook.
+    hooks:
+      post:
+        # The binaries are not notarized; let macOS run the downloaded file.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/agentguard"]
+          end

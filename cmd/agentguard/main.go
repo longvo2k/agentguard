@@ -73,7 +73,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "demo":
 		err = cmdDemo(rest, stdout)
 	case "version", "--version":
-		fmt.Fprintln(stdout, "agentguard", version)
+		fmt.Fprintf(stdout, "agentguard %s\nsandbox image: %s\n", version, config.DefaultImage())
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 	default:

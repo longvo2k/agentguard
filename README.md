@@ -34,6 +34,25 @@ $ agentguard run --role developer -- npm test     # runs in the sandbox
 $ agentguard check read .env                      # DENY (exit 1)
 ```
 
+**Set up once, protected everywhere:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/longvo2k/agentguard/main/install.sh | sh
+```
+
+The installer verifies the download and runs `agentguard setup`, which
+installs user-level policies for every project and hooks AgentGuard into
+Claude Code. From then on Claude Code asks AgentGuard before every file read,
+edit, command and web request, in every project, with nothing to configure
+per repository.
+
+AgentGuard works in two modes:
+
+| Mode | How | Boundary |
+|---|---|---|
+| **Sandbox** | `agentguard run -- <cmd>` runs the command in a locked-down container | **Hard**: the kernel enforces it |
+| **Hook** | Claude Code's `PreToolUse` hook calls `agentguard hook claude` before each tool call | **Guard rail**: the agent still runs as you; see [limitations](#known-limitations) |
+
 ## Why agents need least privilege
 
 Coding agents read files, run shell commands and install packages on your
@@ -106,44 +125,118 @@ a self-test: it exits non-zero if any boundary does not hold. Use
 `agentguard demo --keep` to explore the project afterwards, or
 `--no-docker` to see only the policy engine.
 
-The first run builds the sandbox image (`node:22-alpine` plus `git`), which
-needs access to Docker Hub and the Alpine package mirror.
+The first run pulls the sandbox image (`node:22-alpine` plus `git`) from
+`ghcr.io/longvo2k/agentguard-sandbox`. Release binaries pin it by digest. If
+the pull fails, AgentGuard builds the same image locally from its built-in
+Dockerfile.
 
 ## Installation
 
-**Requirements:** Linux or macOS, Go 1.22+, Docker 20.10+ (Docker Desktop,
-Colima, OrbStack or Docker Engine).
+**Requirements:** Linux or macOS. Docker 20.10+ (Docker Desktop, Colima,
+OrbStack or Docker Engine) for `agentguard run`; the Claude Code hook works
+without Docker.
+
+**One-line install** (no Go, no sudo):
 
 ```sh
-# from source
-git clone https://github.com/longvo2k/agentguard
-cd agentguard
-make build            # produces ./bin/agentguard, a single static binary
-make install          # or: go install ./cmd/agentguard
-
-# or directly
-go install github.com/longvo2k/agentguard/cmd/agentguard@latest
+curl -fsSL https://raw.githubusercontent.com/longvo2k/agentguard/main/install.sh | sh
 ```
 
-The only Go dependency is `gopkg.in/yaml.v3`. AgentGuard talks to Docker
-through the `docker` CLI, so `DOCKER_HOST` and Docker contexts work as usual.
+It downloads the release binary for your OS and CPU, checks its SHA-256
+against the release's `checksums.txt` (and refuses to install on a
+mismatch), installs to `~/.local/bin`, then runs `agentguard setup`, which
+asks before each change. Options: `AGENTGUARD_VERSION=v0.2.0`,
+`AGENTGUARD_INSTALL_DIR=/usr/local/bin`, `AGENTGUARD_NO_SETUP=1`. Prefer to
+read the script first? Download it, read it, then run `sh install.sh`.
+
+**Homebrew:**
+
+```sh
+brew install --cask longvo2k/tap/agentguard
+agentguard setup
+```
+
+**From source** (Go 1.22+):
+
+```sh
+go install github.com/longvo2k/agentguard/cmd/agentguard@latest
+# or: git clone https://github.com/longvo2k/agentguard && cd agentguard && make install
+agentguard setup
+```
+
+### What `agentguard setup` does
+
+Every step is idempotent, asks first (unless `--yes`), and is undone by
+`agentguard setup --uninstall` (add `--purge` to also delete policies and
+logs).
+
+1. Creates user policies in `~/.config/agentguard/`. They apply to every
+   project that has no `.agentguard/` of its own. The default role, `agent`,
+   may read and edit the whole project, run common development tools, and
+   nothing else: no `.env*`, `secrets/`, `.git/` writes, `.claude/` writes,
+   nothing outside the project, no network.
+2. Pulls the sandbox image (when Docker is running).
+3. Adds AgentGuard's `PreToolUse` hook to `~/.claude/settings.json`, keeping
+   your other settings and saving a backup next to the file.
+
+Then check everything with `agentguard doctor`.
+
+The binary is a single static file. The only Go dependency is
+`gopkg.in/yaml.v3`. AgentGuard talks to Docker through the `docker` CLI, so
+`DOCKER_HOST` and Docker contexts work as usual.
 
 ## Usage
 
+### `agentguard setup`, `agentguard doctor`
+
+One-time setup (see [above](#what-agentguard-setup-does)) and a health check
+that reports what is installed, which policies apply to the current
+directory, and whether the hook points at a binary that exists.
+
+### `agentguard hook claude`
+
+What Claude Code runs before each tool call. It reads the hook event on
+stdin, maps the tool call to policy requests, and exits `0` to allow or `2`
+to block, with the reason on stderr (Claude sees it). Every request is
+audited with `source: hook`.
+
+| Claude Code tool | Checked as |
+|---|---|
+| `Read` | `read file_path` |
+| `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `write` of the file |
+| `Grep` | `read` of the search path (default: the current directory) |
+| `Glob` | `read` of `path`, if given (Glob returns names, not contents) |
+| `Bash` | each command in the line (`;`, `&&`, `\|\|`, `\|`) as `execute`; file arguments that exist as `read`; arguments of `rm`, `mv`, `cp`, `touch`, `mkdir`, `tee`, `ln`, `chmod`... and `>` redirections as `write`; `cd` is followed. Command substitution, `eval`, `source`, heredocs, process substitution, `find -exec` and variables in path arguments are refused because the hook cannot see what they would run |
+| `WebFetch`, `WebSearch` | `network` |
+| anything else | not judged |
+
+If no policy applies to the directory (AgentGuard not set up), the hook
+allows everything. If the configuration is broken or untrusted, it blocks
+(fails closed). Use `AGENTGUARD_ROLE=reviewer claude` to run Claude Code
+under a different role.
+
 ### `agentguard init`
 
-Creates the workspace configuration in the current directory:
+Creates project-specific policies, which take precedence over the user
+policies for this project:
 
 ```text
 .agentguard/
 ├── config.yaml          # default role, image, resource limits
 └── policies/
+    ├── agent.yaml
     ├── developer.yaml
     ├── tester.yaml
     └── reviewer.yaml
 ```
 
-Existing files are never overwritten unless you pass `--force`.
+Existing files are never overwritten unless you pass `--force`. The new
+policies are trusted automatically, because you just created them.
+
+### `agentguard trust [--revoke]`
+
+Approves the current project's `.agentguard/` after you review it. See
+[Where policies come from](#where-policies-come-from).
 
 ### `agentguard check [--role R] <action> [resource]`
 
@@ -236,6 +329,30 @@ metadata:                         # optional
   expires_at: 2026-12-31T18:00:00Z  # after this, every request is denied
 ```
 
+### Where policies come from
+
+For any directory, AgentGuard picks exactly one configuration:
+
+1. **The project's `.agentguard/`**, if there is one at or above the
+   directory. It is used **only if trusted**: created by `agentguard init` on
+   this machine, or approved with `agentguard trust`. Trust is tied to a hash
+   of `config.yaml` and `policies/*.yaml`, so any change (including a
+   `git pull` that edits them) needs review and `agentguard trust` again.
+   This stops a cloned repository, or an agent that wrote
+   `src/.agentguard/` during an earlier run, from granting itself access.
+   Nested `.agentguard/` directories are refused outright.
+2. **Otherwise the user policies** in `~/.config/agentguard/` (or
+   `$XDG_CONFIG_HOME/agentguard`). The workspace is then the enclosing git
+   repository, or the current directory. Audit logs go to
+   `~/.local/state/agentguard/projects/<name>-<hash>/audit.jsonl`.
+3. **Otherwise nothing applies**: `check` and `run` ask you to run
+   `agentguard setup` or `agentguard init`.
+
+Your home directory, or any directory that contains it or AgentGuard's own
+files, is never accepted as a workspace. With such a root, a role with broad
+write access could edit `~/.claude/settings.json` or your user policies.
+`AGENTGUARD_HOME` relocates all user-level files (useful for tests).
+
 ### Path patterns
 
 Patterns follow `.gitignore` conventions:
@@ -263,7 +380,8 @@ wins:
    `../`, an absolute path, `~` or a symlink.
 3. **Protected paths.** `.agentguard/` (at any depth) is never readable or
    writable. `.git/` is never writable, because hooks and config would run on
-   your host.
+   your host. `.claude/` is never writable, because an agent could switch
+   off its own hook.
 4. **`deny` rules**, matched case-insensitively (so `.ENV` is caught on
    case-insensitive filesystems).
 5. **Built-in sensitive files**, denied even if a policy forgets them:
@@ -289,7 +407,7 @@ version: 1
 default_role: developer
 audit_log: audit.jsonl          # always inside .agentguard/
 sandbox:
-  image: agentguard-sandbox:0.1 # built automatically; or any image with /bin/sh
+  # image: node:22              # default: the official image; any image with /bin/sh works
   memory: 1g
   cpus: "2"
   pids_limit: 256
@@ -367,7 +485,8 @@ trusts you, your Docker daemon, the Linux kernel and the sandbox image.
 | Network | `--network none`: only loopback exists | **Strong** (on/off only) |
 | Privilege | Non-root uid, `--cap-drop ALL`, `no-new-privileges`, setuid bits stripped in image, default seccomp, read-only root fs, `noexec` `/tmp` and home | **Strong**, at Docker's level |
 | Host credentials | No host env vars, no home dir, no `~/.ssh`, no Docker socket; sockets in the workspace are hidden; `.git/config` sanitized | **Strong** for the listed sources |
-| Agent tampering with policy/logs | `.agentguard/` never mounted, protected at any depth; nested `.agentguard/` refused | **Strong** |
+| Agent tampering with policy/logs | `.agentguard/` never mounted, protected at any depth; nested `.agentguard/` refused; project policies need the user's trust; user files live outside any workspace | **Strong** |
+| Hook mode (Claude Code) | Every tool call checked against the policy before it runs | **Guard rail**: the agent keeps your permissions, see below |
 | Command allowlist | Launch gate (hard) + PATH containing only allowed commands (soft) | **Partial**, see below |
 | Resource exhaustion | `--pids-limit`, `--memory`, `--cpus` | **Basic** |
 
@@ -422,6 +541,32 @@ oversight we are hiding.
     `sandbox.user`), so writable directories must be writable by that uid.
 12. **Only Linux and macOS** are supported. Windows paths are not handled.
 
+**Hook mode** (Claude Code) has its own, larger gaps, because the agent runs
+on your machine with your permissions and AgentGuard only sees what each tool
+call says it will do:
+
+13. **Interpreters see everything.** `python3 -c`, `node -e`, `npm` scripts,
+    `make` and build tools are checked by name only; what they do inside is
+    invisible to the hook. Remove them from the `agent` role if that matters,
+    or run the work with `agentguard run`. Likewise `network.enabled: false`
+    only stops Claude's own web tools: allowed commands such as `npm install`
+    or `git push` still use your network.
+14. **Recursive readers.** `Grep`, `grep -r` and `rg` over an allowed
+    directory read every file below it, including files the policy denies
+    (a nested `src/.env`, for example): the hook checks the search root, not
+    each file the tool opens. Claude Code's `Grep` skips files ignored by
+    `.gitignore`, which usually covers `.env`, but that is not a guarantee.
+15. **The Bash parser is best-effort.** It refuses syntax it cannot follow,
+    but shell is large; treat it as a guard rail, not a proof.
+16. **Settings precedence.** The hook lives in `~/.claude/settings.json`.
+    Project or managed Claude Code settings can add hooks, and possibly
+    disable them; AgentGuard write-protects `.claude/` to keep agents from
+    doing so, but a repository can ship its own `.claude/settings.json`.
+17. **Running the agent itself inside the sandbox** (`agentguard run --
+    claude`) is not supported yet: the agent needs network access to its API,
+    its credentials, and an image that contains it. This needs the domain
+    allowlist below.
+
 ## Roadmap
 
 **v0.2 (next)**
@@ -429,9 +574,13 @@ oversight we are hiding.
 - Exec filtering inside the container (seccomp user notification or
   Landlock), making the command allowlist a hard boundary.
 - File-level audit of reads and writes inside the sandbox (fanotify).
-- Agent integrations: a `PreToolUse` hook for Claude Code and similar hooks
-  for other agents that call `agentguard check`, plus images that ship an
-  agent CLI.
+- Run whole agents inside the sandbox: domain allowlist (above), explicit
+  pass-through of the agent's API key, agent images, and `setup` wrappers so
+  typing `claude` starts it sandboxed.
+- Hooks for other agents (Codex, Gemini CLI and others) using the same
+  engine as `agentguard hook claude`.
+- Signed releases (cosign) and build provenance attestations, verified by
+  the installer.
 - `agentguard policy lint` and `agentguard policy explain <path>`.
 - Copy-in/copy-out mode for repositories with complex deny rules.
 
@@ -459,6 +608,24 @@ path traversal, absolute paths, symlink escapes (including `link/..`),
 policies, and in real containers: unreadable placeholders, read-only mounts,
 no network, non-root uid, no host environment, sanitized git config, a
 read-only `.git` under broad write access, and the command gate.
+
+### Releasing
+
+Push a tag such as `v0.2.0`. `.github/workflows/release.yml` then:
+
+1. builds the sandbox image for amd64 and arm64 and pushes it to
+   `ghcr.io/longvo2k/agentguard-sandbox` (`:0.1` and `:<tag>`),
+2. runs the full test suite, including the container tests, against exactly
+   that image,
+3. builds the binaries with GoReleaser, pinning the image digest into them,
+   and publishes them with `checksums.txt`.
+
+One-time steps for the maintainer: make the GHCR package public after the
+first release (GitHub → Packages → agentguard-sandbox → settings), and, for
+Homebrew, create the `longvo2k/homebrew-tap` repository and add a
+`HOMEBREW_TAP_TOKEN` secret that can push to it. Without the token the
+release still succeeds and simply skips the cask. `make release-snapshot`
+builds everything locally into `dist/` without publishing.
 
 Security reports and design critiques are very welcome. Please open an issue.
 

@@ -72,6 +72,15 @@ func compilePattern(raw string, home string) (pattern, error) {
 	if len(pt.segs) == 0 && !pt.absolute {
 		return pattern{}, fmt.Errorf("pattern %q matches nothing useful", raw)
 	}
+	// "**" means everything, the workspace root included. Matching it as a
+	// name pattern would miss the root, which has no name.
+	allDoubleStar := true
+	for _, seg := range pt.segs {
+		allDoubleStar = allDoubleStar && seg == "**"
+	}
+	if allDoubleStar {
+		pt.anchored = true
+	}
 	return pt, nil
 }
 

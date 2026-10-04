@@ -140,6 +140,8 @@ func TestBuiltinSensitiveFiles(t *testing.T) {
 	e := newEngine(t, "role: careless\nfilesystem:\n  read: ['**']\n  write: ['**']\n", root)
 	run(t, e, []tc{
 		{ActionRead, "src/app.js", true},
+		{ActionRead, ".", true}, // ** includes the workspace root itself
+		{ActionRead, root, true},
 		{ActionRead, ".env", false},
 		{ActionRead, "src/server.pem", false},
 		{ActionRead, "deploy/id_rsa", false},

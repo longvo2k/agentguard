@@ -2,7 +2,7 @@ VERSION ?= 0.1.0
 BIN     := bin/agentguard
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build install test test-short test-docker lint demo clean image
+.PHONY: build install test test-short test-docker lint demo clean image release-snapshot
 
 build: ## Build the agentguard binary into bin/
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/agentguard
@@ -23,11 +23,14 @@ lint: ## gofmt + go vet
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	go vet ./...
 
-image: ## Build the default sandbox image
-	docker build -t agentguard-sandbox:0.1 - < internal/sandbox/Dockerfile
+image: ## Build the sandbox image locally (what agentguard falls back to)
+	docker build -t agentguard-sandbox:local - < internal/sandbox/Dockerfile
+
+release-snapshot: ## Build release archives into dist/ without publishing
+	goreleaser release --snapshot --clean
 
 demo: build ## Run the demo
 	./$(BIN) demo
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/

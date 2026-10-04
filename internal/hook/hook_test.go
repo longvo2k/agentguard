@@ -188,3 +188,15 @@ func TestParseClaude(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestWorkspaceRootCommands(t *testing.T) {
+	e, root := agentEngine(t)
+	for _, cmd := range []string{"git add .", "grep -r TODO .", "ls .", "find . -name '*.js'"} {
+		if v := decide(e, root, "Bash", map[string]any{"command": cmd}); !v.Allowed {
+			t.Errorf("%q blocked: %s", cmd, v.Reason)
+		}
+	}
+	if v := decide(e, root, "Grep", map[string]any{"pattern": "x"}); !v.Allowed {
+		t.Errorf("Grep without path blocked: %s", v.Reason)
+	}
+}
