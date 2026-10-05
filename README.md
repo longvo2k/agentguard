@@ -34,17 +34,17 @@ $ agentguard run --role developer -- npm test     # runs in the sandbox
 $ agentguard check read .env                      # DENY (exit 1)
 ```
 
-**Set up once, protected everywhere:**
+**Install once, then opt in per project:**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/longvo2k/agentguard/main/install.sh | sh
+cd my-project && agentguard init
 ```
 
-The installer verifies the download and runs `agentguard setup`, which
-installs user-level policies for every project and hooks AgentGuard into
-Claude Code. From then on Claude Code asks AgentGuard before every file read,
-edit, command and web request, in every project, with nothing to configure
-per repository.
+The installer verifies the download and runs `agentguard setup`, which hooks
+AgentGuard into Claude Code. In projects where you ran `agentguard init`,
+Claude Code then asks AgentGuard before every file read, edit, command and
+web request. Everywhere else it runs exactly as before.
 
 AgentGuard works in two modes:
 
@@ -170,14 +170,18 @@ Every step is idempotent, asks first (unless `--yes`), and is undone by
 `agentguard setup --uninstall` (add `--purge` to also delete policies and
 logs).
 
-1. Creates user policies in `~/.config/agentguard/`. They apply to every
-   project that has no `.agentguard/` of its own. The default role, `agent`,
-   may read and edit the whole project, run common development tools, and
-   nothing else: no `.env*`, `secrets/`, `.git/` writes, `.claude/` writes,
-   nothing outside the project, no network.
+1. Creates user policies in `~/.config/agentguard/`. `agentguard run` and
+   `agentguard check` use them in directories without a `.agentguard/` of
+   their own. The default role, `agent`, may read and edit the whole
+   project, run common development tools, and nothing else: no `.env*`,
+   `secrets/`, `.git/` writes, `.claude/` writes, nothing outside the
+   project, no network.
 2. Pulls the sandbox image (when Docker is running).
 3. Adds AgentGuard's `PreToolUse` hook to `~/.claude/settings.json`, keeping
-   your other settings and saving a backup next to the file.
+   your other settings and saving a backup next to the file. The hook only
+   acts in projects that have a `.agentguard/` (created by `agentguard
+   init`). To have it enforce the user policies in every directory instead,
+   run `agentguard setup --hook-global`.
 
 Then check everything with `agentguard doctor`.
 
@@ -210,10 +214,16 @@ audited with `source: hook`.
 | `WebFetch`, `WebSearch` | `network` |
 | anything else | not judged |
 
-If no policy applies to the directory (AgentGuard not set up), the hook
-allows everything. If the configuration is broken or untrusted, it blocks
-(fails closed). Use `AGENTGUARD_ROLE=reviewer claude` to run Claude Code
-under a different role.
+**Where the hook acts.** Only in projects with a `.agentguard/` at or above
+Claude Code's working directory. Anywhere else (other repositories, your home
+directory, scratch folders) it allows every call and logs nothing. With
+`--global` (installed by `agentguard setup --hook-global`) it also enforces
+the user policies outside such projects.
+
+Inside a project that opted in, a broken, nested or untrusted configuration
+blocks every call (fails closed), so an edited policy is never silently
+ignored. Use `AGENTGUARD_ROLE=reviewer claude` to run Claude Code under a
+different role.
 
 ### `agentguard init`
 

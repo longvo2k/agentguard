@@ -22,7 +22,7 @@ func read(t *testing.T, path string) map[string]any {
 
 func TestInstallIntoMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".claude", "settings.json")
-	cmd := HookCommand("/usr/local/bin/agentguard")
+	cmd := HookCommand("/usr/local/bin/agentguard", false)
 	changed, err := InstallClaudeHook(path, cmd)
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
@@ -54,7 +54,7 @@ func TestInstallPreservesOtherSettings(t *testing.T) {
 	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallClaudeHook(path, HookCommand("/opt/ag/agentguard")); err != nil {
+	if _, err := InstallClaudeHook(path, HookCommand("/opt/ag/agentguard", false)); err != nil {
 		t.Fatal(err)
 	}
 	m := read(t, path)
@@ -77,7 +77,7 @@ func TestInstallPreservesOtherSettings(t *testing.T) {
 	}
 
 	// Moving the binary updates the existing entry instead of adding one.
-	if changed, _ := InstallClaudeHook(path, HookCommand("/new/place/agentguard")); !changed {
+	if changed, _ := InstallClaudeHook(path, HookCommand("/new/place/agentguard", false)); !changed {
 		t.Error("expected update")
 	}
 	pre = read(t, path)["hooks"].(map[string]any)["PreToolUse"].([]any)
@@ -107,7 +107,7 @@ func TestInstallPreservesOtherSettings(t *testing.T) {
 
 func TestUninstallCleansEmptyHooks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if _, err := InstallClaudeHook(path, HookCommand("agentguard")); err != nil {
+	if _, err := InstallClaudeHook(path, HookCommand("agentguard", false)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UninstallClaudeHook(path); err != nil {
@@ -123,7 +123,7 @@ func TestInvalidSettingsAreNotOverwritten(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallClaudeHook(path, HookCommand("agentguard")); err == nil {
+	if _, err := InstallClaudeHook(path, HookCommand("agentguard", false)); err == nil {
 		t.Fatal("expected error")
 	}
 	if data, _ := os.ReadFile(path); string(data) != "{ not json" {
@@ -132,7 +132,27 @@ func TestInvalidSettingsAreNotOverwritten(t *testing.T) {
 }
 
 func TestHookCommandQuoting(t *testing.T) {
-	if got := HookCommand("/Users/me/My Tools/agentguard"); got != "'/Users/me/My Tools/agentguard' hook claude" {
+	if got := HookCommand("/Users/me/My Tools/agentguard", false); got != "'/Users/me/My Tools/agentguard' hook claude" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestSwitchingToGlobalUpdatesTheEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if _, err := InstallClaudeHook(path, HookCommand("/bin/agentguard", false)); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := InstallClaudeHook(path, HookCommand("/bin/agentguard", true)); err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	pre := read(t, path)["hooks"].(map[string]any)["PreToolUse"].([]any)
+	if len(pre) != 1 {
+		t.Fatalf("duplicate entries: %v", pre)
+	}
+	if got, _ := ClaudeHookInstalled(path); got != "/bin/agentguard hook claude --global" {
+		t.Errorf("command = %q", got)
+	}
+	if changed, _ := UninstallClaudeHook(path); !changed {
+		t.Error("global hook not recognized by uninstall")
 	}
 }

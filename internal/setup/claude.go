@@ -40,12 +40,18 @@ func ClaudeDetected() bool {
 }
 
 // HookCommand is the command line Claude Code runs for the hook.
-func HookCommand(exe string) string {
-	return shellQuote(exe) + hookMarker
+// With global, the hook also enforces user-level policies outside projects
+// that have their own .agentguard/.
+func HookCommand(exe string, global bool) string {
+	cmd := shellQuote(exe) + hookMarker
+	if global {
+		cmd += " --global"
+	}
+	return cmd
 }
 
 func isOurs(cmd string) bool {
-	return strings.Contains(cmd, "agentguard") && strings.HasSuffix(strings.TrimSpace(cmd), strings.TrimSpace(hookMarker))
+	return strings.Contains(cmd, "agentguard") && strings.Contains(cmd, hookMarker)
 }
 
 // readSettings returns the settings object, or an empty one if the file

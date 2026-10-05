@@ -282,7 +282,7 @@ func TestSetupHookAndUninstall(t *testing.T) {
 		t.Fatalf("settings after setup:\n%s", data)
 	}
 
-	// Any project is now covered by the user-level "agent" role.
+	// `check` (an explicit command) applies the user-level "agent" role anywhere.
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -303,6 +303,23 @@ func TestSetupHookAndUninstall(t *testing.T) {
 		}
 	}
 
+	if _, err := os.Stat(filepath.Join(dir, ".agentguard")); err == nil {
+		t.Error("user-level mode wrote into the project")
+	}
+
+	// The hook leaves directories without .agentguard/ alone, the home
+	// directory included: Claude Code works there as if AgentGuard were absent.
+	for _, cwd := range []string{dir, home} {
+		ev := hookEvent(cwd, "Read", map[string]any{"file_path": filepath.Join(dir, ".env")})
+		if out, code := agentguardIn(t, cwd, ev, "hook", "claude"); code != 0 {
+			t.Errorf("hook acted outside an initialized project (cwd %s): %d %s", cwd, code, out)
+		}
+	}
+
+	// Opting the project in turns the hook on there.
+	if out, code := agentguard(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %d %s", code, out)
+	}
 	hooks := []struct {
 		tool  string
 		input map[string]any
@@ -328,13 +345,22 @@ func TestSetupHookAndUninstall(t *testing.T) {
 		t.Errorf("malformed hook input allowed: %d %s", code, out)
 	}
 
-	// Audit entries for the project live in the user state dir.
 	out, _ = agentguard(t, dir, "audit", "--denied", "--json")
 	if !strings.Contains(out, `"source":"hook"`) || !strings.Contains(out, `"path":".env"`) {
 		t.Errorf("hook decisions not audited:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agentguard")); err == nil {
-		t.Error("user-level mode wrote into the project")
+
+	// --hook-global restores enforcement everywhere, with the user policies.
+	other := project(t)
+	if out, code := agentguard(t, other, "setup", "--yes", "--skip-image", "--hook-global"); code != 0 {
+		t.Fatalf("setup --hook-global: %d %s", code, out)
+	}
+	if cmd, _ := os.ReadFile(settings); !strings.Contains(string(cmd), "hook claude --global") {
+		t.Fatalf("global hook not installed:\n%s", cmd)
+	}
+	ev := hookEvent(other, "Read", map[string]any{"file_path": filepath.Join(other, ".env")})
+	if out, code := agentguardIn(t, other, ev, "hook", "claude", "--global"); code != 2 {
+		t.Errorf("global hook did not block .env in an uninitialized project: %d %s", code, out)
 	}
 
 	if out, code := agentguard(t, dir, "doctor"); code != 0 || !strings.Contains(out, "Claude Code hook installed") {

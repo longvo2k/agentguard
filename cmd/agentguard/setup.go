@@ -25,6 +25,7 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 	yes := fs.Bool("yes", false, "accept every step without asking")
 	skipImage := fs.Bool("skip-image", false, "do not pull the sandbox image")
 	skipHook := fs.Bool("skip-hook", false, "do not install the Claude Code hook")
+	hookGlobal := fs.Bool("hook-global", false, "make the hook enforce user policies in every directory, not only in projects with .agentguard/")
 	uninstall := fs.Bool("uninstall", false, "remove the Claude Code hook")
 	purge := fs.Bool("purge", false, "with --uninstall: also delete user policies, trust list, logs and cache")
 	pos, _, err := parse(fs, args)
@@ -55,7 +56,7 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	if len(written) > 0 {
 		fmt.Fprintf(out, "✓ Created user policies in %s\n", cfgDir)
-		fmt.Fprintf(out, "  Default role \"agent\": the whole project except secrets, .git and .claude; no network.\n")
+		fmt.Fprintf(out, "  Used by `agentguard run` and `check` outside projects that have their own .agentguard/.\n")
 	} else {
 		fmt.Fprintf(out, "✓ User policies already in %s (kept as they are)\n", cfgDir)
 	}
@@ -90,7 +91,7 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		changed, err := setup.InstallClaudeHook(settings, setup.HookCommand(exe))
+		changed, err := setup.InstallClaudeHook(settings, setup.HookCommand(exe, *hookGlobal))
 		if err != nil {
 			return err
 		}
@@ -99,13 +100,17 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 		} else {
 			fmt.Fprintf(out, "✓ Claude Code hook already installed\n")
 		}
-		fmt.Fprintf(out, "  Claude Code now asks AgentGuard before reading, editing or running anything.\n")
+		if *hookGlobal {
+			fmt.Fprintf(out, "  Claude Code now asks AgentGuard before every file access, command and web request, in every directory.\n")
+		} else {
+			fmt.Fprintf(out, "  It only acts in projects where you run `agentguard init`; elsewhere Claude Code is untouched.\n")
+		}
 	default:
 		fmt.Fprintf(out, "- Claude Code hook: not installed\n")
 	}
 
 	fmt.Fprintf(out, "\nDone. Check with `agentguard doctor`.\n")
-	fmt.Fprintf(out, "Per-project policies: `agentguard init` in a project overrides the user policies.\n")
+	fmt.Fprintf(out, "Protect a project: run `agentguard init` in it (then edit .agentguard/policies/).\n")
 	fmt.Fprintf(out, "Undo everything: `agentguard setup --uninstall [--purge]`.\n")
 	return nil
 }
@@ -225,12 +230,16 @@ func cmdDoctor(args []string, out io.Writer) (int, error) {
 
 	settings, _ := setup.ClaudeSettingsPath()
 	if cmd, installed := setup.ClaudeHookInstalled(settings); installed {
-		bin := strings.TrimSuffix(cmd, " hook claude")
+		bin, flags, _ := strings.Cut(cmd, " hook claude")
 		bin = strings.Trim(bin, "'")
+		scope := "only in projects with .agentguard/"
+		if strings.Contains(flags, "--global") {
+			scope = "in every directory (--global)"
+		}
 		if _, err := os.Stat(bin); err != nil && filepath.IsAbs(bin) {
 			bad("Claude Code hook points to %s, which does not exist (rerun `agentguard setup`)", bin)
 		} else {
-			ok("Claude Code hook installed in %s", settings)
+			ok("Claude Code hook installed in %s, enforcing %s", settings, scope)
 		}
 	} else if setup.ClaudeDetected() {
 		warn("Claude Code found but the AgentGuard hook is not installed (run `agentguard setup`)")
@@ -307,9 +316,10 @@ func cmdTrust(args []string, out io.Writer) error {
 func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	role := fs.String("role", os.Getenv("AGENTGUARD_ROLE"), "role to enforce (default: config default_role)")
+	global := fs.Bool("global", false, "also enforce user-level policies outside projects with .agentguard/")
 	pos, _, err := parse(fs, args)
 	if err != nil || len(pos) != 1 || pos[0] != "claude" {
-		fmt.Fprintln(stderr, "usage: agentguard hook claude [--role R]  (reads a PreToolUse event on stdin)")
+		fmt.Fprintln(stderr, "usage: agentguard hook claude [--role R] [--global]  (reads a PreToolUse event on stdin)")
 		return 2
 	}
 	in, err := hook.ParseClaude(stdin)
@@ -320,6 +330,18 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	dir := in.Cwd
 	if dir == "" {
 		dir, _ = os.Getwd()
+	}
+	if !*global {
+		// By default the hook only acts in projects that opted in with
+		// `agentguard init`. Everywhere else Claude Code runs untouched.
+		_, found, err := config.ProjectRoot(dir)
+		if err != nil {
+			fmt.Fprintf(stderr, "AgentGuard: %v\n", err)
+			return 2
+		}
+		if !found {
+			return 0
+		}
 	}
 	_, e, logger, err := loadAt(dir, *role, "hook")
 	if errors.Is(err, config.ErrNotInitialized) {
