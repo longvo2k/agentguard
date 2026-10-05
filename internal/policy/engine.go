@@ -352,11 +352,39 @@ func (e *Engine) evalExecute(name string) Decision {
 	return d
 }
 
-func (e *Engine) evalNetwork(_ string) Decision {
-	if e.policy.Network.Enabled {
+func (e *Engine) evalNetwork(host string) Decision {
+	n := e.policy.Network
+	if !n.Enabled {
+		return Decision{Reason: "network access is disabled for this role", Rule: "network.enabled: false"}
+	}
+	if len(n.Allow) == 0 {
 		return Decision{Allowed: true, Rule: "network.enabled: true"}
 	}
-	return Decision{Reason: "network access is disabled for this role", Rule: "network.enabled: false"}
+	for _, d := range n.Allow {
+		if matchDomain(d, host) {
+			return Decision{Allowed: true, Rule: "network.allow: " + d}
+		}
+	}
+	return Decision{Reason: "host is not in network.allow", Rule: "network.allow"}
+}
+
+// matchDomain reports whether host (optionally with :port) matches an
+// allowlist entry. "*.example.com" matches subdomains only, like Claude
+// Code's sandbox; an entry without a port matches every port.
+func matchDomain(entry, host string) bool {
+	entry, host = strings.ToLower(entry), strings.ToLower(host)
+	eHost, ePort, eHasPort := strings.Cut(entry, ":")
+	hHost, hPort, _ := strings.Cut(host, ":")
+	if eHasPort && ePort != hPort {
+		return false
+	}
+	if hHost == "" {
+		return false
+	}
+	if suffix, ok := strings.CutPrefix(eHost, "*."); ok {
+		return strings.HasSuffix(hHost, "."+suffix)
+	}
+	return hHost == eHost
 }
 
 // ReadPatterns returns the patterns that grant read access, including write

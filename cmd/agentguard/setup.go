@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/longvo2k/agentguard/internal/audit"
 	"github.com/longvo2k/agentguard/internal/config"
 	"github.com/longvo2k/agentguard/internal/hook"
 	"github.com/longvo2k/agentguard/internal/policy"
@@ -26,6 +28,10 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 	skipImage := fs.Bool("skip-image", false, "do not pull the sandbox image")
 	skipHook := fs.Bool("skip-hook", false, "do not install the Claude Code hook")
 	hookGlobal := fs.Bool("hook-global", false, "make the hook enforce user policies in every directory, not only in projects with .agentguard/")
+	server := fs.Bool("server", false, "server mode: root-owned policies, managed Claude Code settings and sandbox (needs sudo)")
+	var workspaces, domains stringList
+	fs.Var(&workspaces, "workspace", "server mode: a directory the agent may work in, as path[:role] (repeatable)")
+	fs.Var(&domains, "allow-domain", "server mode: a host sandboxed commands may reach (repeatable)")
 	uninstall := fs.Bool("uninstall", false, "remove the Claude Code hook")
 	purge := fs.Bool("purge", false, "with --uninstall: also delete user policies, trust list, logs and cache")
 	pos, _, err := parse(fs, args)
@@ -36,6 +42,12 @@ func cmdSetup(args []string, stdin io.Reader, out io.Writer) error {
 		return usagef("unexpected argument %q", pos[0])
 	}
 	ask := asker(stdin, out, *yes)
+	if *server {
+		return runServerSetup(out, ask, workspaces, domains, *uninstall, *purge)
+	}
+	if len(workspaces) > 0 || len(domains) > 0 {
+		return usagef("--workspace and --allow-domain need --server")
+	}
 	if *uninstall {
 		return runUninstall(out, ask, *purge)
 	}
@@ -179,8 +191,12 @@ func asker(stdin io.Reader, out io.Writer, yes bool) func(string) bool {
 // cmdDoctor reports whether every piece is in place.
 func cmdDoctor(args []string, out io.Writer) (int, error) {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	server := fs.Bool("server", false, "check a server-mode installation")
 	if _, _, err := parse(fs, args); err != nil {
 		return 2, err
+	}
+	if *server {
+		return cmdServerDoctor(out)
 	}
 	problems := 0
 	ok := func(f string, a ...any) { fmt.Fprintf(out, "✓ "+f+"\n", a...) }
@@ -317,6 +333,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	role := fs.String("role", os.Getenv("AGENTGUARD_ROLE"), "role to enforce (default: config default_role)")
 	global := fs.Bool("global", false, "also enforce user-level policies outside projects with .agentguard/")
+	server := fs.Bool("server", false, "server mode: enforce the root-owned system policies; block everything outside their workspaces")
 	pos, _, err := parse(fs, args)
 	if err != nil || len(pos) != 1 || pos[0] != "claude" {
 		fmt.Fprintln(stderr, "usage: agentguard hook claude [--role R] [--global]  (reads a PreToolUse event on stdin)")
@@ -330,6 +347,9 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	dir := in.Cwd
 	if dir == "" {
 		dir, _ = os.Getwd()
+	}
+	if *server {
+		return serverHook(in, dir, stderr)
 	}
 	if !*global {
 		// By default the hook only acts in projects that opted in with
@@ -360,6 +380,41 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !v.Allowed {
 		fmt.Fprintf(stderr, "AgentGuard blocked this %s call: %s. Do not try to work around this; if the user needs it, they can change the policy.\n", in.ToolName, v.Reason)
 		return 2
+	}
+	return 0
+}
+
+// serverHook enforces server mode. It fails closed on every problem: Claude
+// Code running as root, a configuration that is not root-owned, or a working
+// directory outside the configured workspaces.
+func serverHook(in *hook.ClaudeInput, dir string, stderr io.Writer) int {
+	block := func(format string, args ...any) int {
+		fmt.Fprintf(stderr, "AgentGuard (server mode) blocked this %s call: %s\n", in.ToolName, fmt.Sprintf(format, args...))
+		return 2
+	}
+	// Calls refused before a workspace policy applies go to server.jsonl,
+	// so attempts outside the workspaces are on record too.
+	logRefusal := func(reason string) {
+		_ = audit.NewLogger(config.ServerLogPath()).Log(audit.Entry{
+			Timestamp: time.Now().UTC(), Role: "-", Action: "tool", Resource: in.ToolName + " in " + dir,
+			Decision: "deny", Reason: reason, Source: "hook",
+		})
+	}
+	if os.Geteuid() == 0 {
+		logRefusal("running as root")
+		return block("Claude Code is running as root. On this server it must run as a dedicated unprivileged user")
+	}
+	_, e, logger, err := loadServerAt(dir, "hook")
+	if err != nil {
+		logRefusal(err.Error())
+		return block("%v", err)
+	}
+	v := hook.DecideClaude(e, in)
+	if err := logger.Err(); err != nil {
+		return block("cannot write audit log: %v", err)
+	}
+	if !v.Allowed {
+		return block("%s. Do not try to work around this; ask the server administrator if access is needed", v.Reason)
 	}
 	return 0
 }

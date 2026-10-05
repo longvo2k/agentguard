@@ -97,3 +97,24 @@ func TestMountPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxGlobs(t *testing.T) {
+	cases := map[string][]string{
+		".env*":        {"/srv/app/.env*", "/srv/app/**/.env*"},
+		"secrets/**":   {"/srv/app/secrets"},
+		"./README.md":  {"/srv/app/README.md"},
+		".git/config":  {"/srv/app/.git/config"},
+		"src/**/*.pem": {"/srv/app/src/**/*.pem"},
+		"~/.ssh/**":    {"~/.ssh"},
+		"/etc/myapp/":  {"/etc/myapp"},
+	}
+	for in, want := range cases {
+		got, err := SandboxGlobs(in, "/srv/app/")
+		if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("SandboxGlobs(%q) = %v %v, want %v", in, got, err, want)
+		}
+	}
+	if _, err := SandboxGlobs("../x", "/srv/app"); err == nil {
+		t.Error("traversal accepted")
+	}
+}

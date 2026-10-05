@@ -89,6 +89,9 @@ func NewPlan(e *policy.Engine, opts Options) (*Plan, error) {
 	}
 
 	p.Network = e.Evaluate(policy.ActionNetwork, "*").Allowed
+	if n := e.Policy().Network; n.Enabled && len(n.Allow) > 0 {
+		p.warn("network.allow lists specific hosts, which the Docker sandbox cannot enforce; the network stays off")
+	}
 
 	tmp, err := os.MkdirTemp("", "agentguard-")
 	if err != nil {

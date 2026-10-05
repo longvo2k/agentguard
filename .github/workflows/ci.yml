@@ -28,6 +28,8 @@ jobs:
         env:
           AGENTGUARD_TEST_IMAGE: agentguard-sandbox:local
         run: go test -count=1 ./...
+      - name: Server mode tests (need root)
+        run: sudo env "PATH=$PATH" go test -count=1 -run 'Server' ./internal/config ./tests
       - name: Demo self-test
         run: go run ./cmd/agentguard demo --image agentguard-sandbox:local
       - name: Check release configuration

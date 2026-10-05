@@ -63,6 +63,8 @@ type Config struct {
 	DefaultRole string  `yaml:"default_role"`
 	AuditLog    string  `yaml:"audit_log"`
 	Sandbox     Sandbox `yaml:"sandbox"`
+	// Server is set only in the system configuration (server mode).
+	Server *Server `yaml:"server,omitempty"`
 }
 
 // Sandbox holds container settings.
@@ -102,6 +104,11 @@ func (c *Config) Validate() error {
 	// The audit log must stay inside .agentguard/, which is never mounted.
 	if c.AuditLog == "" || filepath.IsAbs(c.AuditLog) || strings.Contains(c.AuditLog, "..") {
 		return fmt.Errorf("audit_log %q must be a relative path inside %s/", c.AuditLog, DirName)
+	}
+	if c.Server != nil {
+		if err := c.Server.validate(); err != nil {
+			return err
+		}
 	}
 	if c.Sandbox.PidsLimit < 0 {
 		return errors.New("sandbox.pids_limit must not be negative")

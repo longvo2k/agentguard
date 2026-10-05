@@ -63,6 +63,11 @@ type Commands struct {
 // Network controls outbound network access. The MVP only supports on/off.
 type Network struct {
 	Enabled bool `yaml:"enabled"`
+	// Allow, if set, limits network access to these hosts. "*.example.com"
+	// matches subdomains of example.com. Claude Code's sandbox enforces it for
+	// commands in server mode; the Docker sandbox cannot, so it keeps the
+	// network off for roles with an allowlist.
+	Allow []string `yaml:"allow,omitempty"`
 }
 
 // Metadata describes where a policy came from. It is reserved for future
@@ -77,6 +82,7 @@ type Metadata struct {
 var (
 	roleRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	commandRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+	domainRe  = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*(:[0-9]{1,5})?$`)
 )
 
 // Parse decodes and validates a policy. Unknown fields are rejected so a
@@ -143,6 +149,11 @@ func (p *Policy) Validate() error {
 	}
 	if err := check("deny", p.Deny, true); err != nil {
 		return err
+	}
+	for _, d := range p.Network.Allow {
+		if !domainRe.MatchString(d) {
+			return fmt.Errorf("network.allow: %q must be a host name such as registry.npmjs.org or *.github.com", d)
+		}
 	}
 	for _, c := range p.Commands.Allow {
 		if !commandRe.MatchString(c) {

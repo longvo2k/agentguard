@@ -177,3 +177,28 @@ func splitPath(p string) []string {
 	}
 	return out
 }
+
+// SandboxGlobs converts a policy pattern into absolute path globs in the
+// syntax of Claude Code's sandbox (denyRead/allowRead), for the workspace at
+// root. Home patterns keep their "~/" prefix, which Claude Code resolves for
+// the user running it. Name patterns become "<root>/<name>" and
+// "<root>/**/<name>" so they match at any depth.
+func SandboxGlobs(raw, root string) ([]string, error) {
+	p := strings.TrimSpace(raw)
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {
+		if _, err := compilePattern(p, "/nonexistent-home"); err != nil {
+			return nil, err
+		}
+		return []string{strings.TrimSuffix(strings.TrimSuffix(p, "/"), "/**")}, nil
+	}
+	pt, err := compilePattern(p, "")
+	if err != nil {
+		return nil, err
+	}
+	root = strings.TrimSuffix(root, "/")
+	joined := strings.Join(pt.segs, "/")
+	if !pt.anchored {
+		return []string{root + "/" + joined, root + "/**/" + joined}, nil
+	}
+	return []string{strings.TrimSuffix(root+"/"+joined, "/**")}, nil
+}

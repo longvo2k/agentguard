@@ -46,12 +46,19 @@ AgentGuard into Claude Code. In projects where you ran `agentguard init`,
 Claude Code then asks AgentGuard before every file read, edit, command and
 web request. Everywhere else it runs exactly as before.
 
-AgentGuard works in two modes:
+**On a server, lock Claude Code down for good:**
+
+```sh
+sudo agentguard setup --server --workspace /srv/app --allow-domain registry.npmjs.org
+```
+
+AgentGuard works in three modes:
 
 | Mode | How | Boundary |
 |---|---|---|
 | **Sandbox** | `agentguard run -- <cmd>` runs the command in a locked-down container | **Hard**: the kernel enforces it |
-| **Hook** | Claude Code's `PreToolUse` hook calls `agentguard hook claude` before each tool call | **Guard rail**: the agent still runs as you; see [limitations](#known-limitations) |
+| **Hook** (your machine) | Claude Code's `PreToolUse` hook calls `agentguard hook claude` before each tool call, in projects you opted in | **Guard rail**: the agent still runs as you; see [limitations](#known-limitations) |
+| **Server** | Root-owned policies, a managed hook nobody else can disable, and Claude Code's own Bash sandbox (bubblewrap) required for every command | **Hard for Bash commands, guard rail for file tools**; see [Server mode](#server-mode) |
 
 ## Why agents need least privilege
 
@@ -314,6 +321,87 @@ Each line of the log is one decision:
 ```json
 {"timestamp":"2026-10-03T20:04:26Z","role":"developer","action":"read","resource":".env","decision":"deny","reason":"matches deny rule","rule":"deny: .env*","source":"check"}
 ```
+
+## Server mode
+
+For machines where an agent must not wander: production hosts, shared
+build servers, anything holding other people's data. On your own laptop use
+the per-project hook instead.
+
+**Requirements:** Linux, root access to set it up, `bubblewrap` and `socat`
+(`apt install bubblewrap socat` or `dnf install bubblewrap socat`), and
+Claude Code running as a **dedicated unprivileged user**, for example:
+
+```sh
+sudo useradd -m claude-agent
+sudo agentguard setup --server \
+  --workspace /srv/app \
+  --workspace /srv/api:reviewer \
+  --allow-domain registry.npmjs.org --allow-domain '*.github.com'
+sudo -u claude-agent -i    # then: cd /srv/app && claude
+agentguard doctor --server
+```
+
+`--workspace path[:role]` lists the only directories the agent may work in
+(default role `agent`). `--allow-domain` lists the hosts commands may reach.
+Rerun the command any time; it merges new workspaces and regenerates
+everything from `/etc/agentguard/config.yaml`, which you can also edit
+directly (add `server.deny_read` for paths such as `/etc/myapp`).
+
+### What it sets up
+
+| Piece | Where | Why the agent cannot undo it |
+|---|---|---|
+| Policies and workspace list | `/etc/agentguard/` | Root-owned. The hook refuses to run if any file there, or a parent directory, is not root-owned or is writable by others, or is a symlink |
+| Hook binary | `/usr/local/bin/agentguard` | Root-owned |
+| Claude Code managed settings | `/etc/claude-code/managed-settings.d/50-agentguard.json` | Managed settings outrank user and project settings, `allowManagedHooksOnly` blocks every other hook, and only managed settings can disable a managed hook |
+| Audit logs | `/var/log/agentguard/<workspace>-<hash>.jsonl`, `server.jsonl` | Root-owned, append-only (`chattr +a`): the agent's user can add lines but not truncate or rewrite them |
+
+The managed settings turn on Claude Code's [Bash sandbox](https://code.claude.com/docs/en/sandboxing)
+and make it mandatory (`failIfUnavailable`, `allowUnsandboxedCommands: false`,
+`disableBypassPermissionsMode`). Every command the agent runs, and every
+process it starts (`python3 -c` and `npm` scripts included), then runs in
+bubblewrap with:
+
+- **no reads** of `/home`, `/root`, `/srv`, `/mnt`, `/var/lib`, `/var/log`,
+  `/etc/ssh`, `/etc/ssl/private` and similar data directories, except the
+  workspaces and the agent's own home; no reads of credential stores in that
+  home (`~/.ssh`, `~/.aws`, `~/.claude`, `~/.npmrc`, shell history); no reads
+  of the files your policies deny inside the workspaces (`.env*`,
+  `secrets/`, keys);
+- **no writes** outside the workspace and temp directory, and none to
+  `.git/`, `.agentguard/`, the policies or the logs;
+- **network only** to the `--allow-domain` hosts, with the list locked to
+  managed settings.
+
+The hook, in turn, checks every `Read`, `Edit`, `Write`, `Grep`, `Glob`,
+`Bash` and `WebFetch` call against the workspace's policy. In server mode it
+**blocks every call** when Claude Code runs as root, when its working
+directory is outside the configured workspaces, or when the configuration
+is not root-only. It ignores project `.agentguard/` directories, user
+policies, `--role` and `AGENTGUARD_ROLE`, since the agent's user controls
+all of those.
+
+`agentguard check --server read .env` (from inside a workspace) answers with
+the server policies. Undo with `sudo agentguard setup --server --uninstall`
+(add `--purge` to delete the policies and logs too).
+
+### Server mode limits
+
+- The Bash sandbox is Claude Code's; AgentGuard configures and requires it.
+  Read, Edit and other file tools are covered by the hook and by managed
+  `permissions.deny` rules, not by the sandbox.
+- System directories (`/usr`, `/etc`, `/opt`) stay readable so tools work.
+  Anything secret under them (an app's `/etc/myapp/secrets.yaml`) must be
+  listed in `server.deny_read`, or protected by file permissions, which a
+  dedicated user makes effective.
+- Wildcard read denials are expanded when Claude Code starts, so a matching
+  file created during the session is not hidden from commands (the hook
+  still refuses the file tools on it).
+- MCP servers and tools are not checked.
+- The agent itself (not its commands) needs network access to its API.
+- Root on the machine can undo everything; that is why Claude Code must not
+  run as root.
 
 ## Policy configuration
 

@@ -28,6 +28,7 @@ const usage = `AgentGuard: give AI agents only the access they need.  (experimen
 
 Usage:
   agentguard setup [--yes]                       one-time setup: user policies, image, agent hooks
+  sudo agentguard setup --server --workspace DIR lock down Claude Code on a server
   agentguard doctor                              check that everything is in place
   agentguard init [--force]                      create .agentguard/ for this project only
   agentguard trust [--revoke]                    approve this project's .agentguard/ policies
@@ -201,6 +202,7 @@ func cmdCheck(args []string, out io.Writer) (int, error) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	role := fs.String("role", "", "role to check (default: config default_role)")
 	asJSON := fs.Bool("json", false, "print the decision as JSON")
+	server := fs.Bool("server", false, "use the server-mode system policies for the current directory")
 	pos, tail, err := parse(fs, args)
 	if err != nil {
 		return 2, err
@@ -219,7 +221,17 @@ func cmdCheck(args []string, out io.Writer) (int, error) {
 	} else if action != policy.ActionNetwork {
 		return 2, usagef("%s needs a resource, e.g. agentguard check %s src/app.js", action, action)
 	}
-	_, e, logger, err := load(*role, "check")
+	var e *policy.Engine
+	var logger *audit.Logger
+	if *server {
+		if *role != "" {
+			return 2, usagef("--role cannot be combined with --server; the workspace decides the role")
+		}
+		cwd, _ := os.Getwd()
+		_, e, logger, err = loadServerAt(cwd, "check")
+	} else {
+		_, e, logger, err = load(*role, "check")
+	}
 	if err != nil {
 		return 2, err
 	}

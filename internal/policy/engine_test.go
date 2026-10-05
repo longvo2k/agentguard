@@ -309,6 +309,29 @@ func TestCommands(t *testing.T) {
 	})
 }
 
+func TestNetworkAllowlist(t *testing.T) {
+	root := newWorkspace(t)
+	e := newEngine(t, "role: net\nnetwork:\n  enabled: true\n  allow: [registry.npmjs.org, '*.github.com', 'api.example.com:443']\n", root)
+	run(t, e, []tc{
+		{ActionNetwork, "registry.npmjs.org", true},
+		{ActionNetwork, "REGISTRY.npmjs.org:443", true},
+		{ActionNetwork, "api.github.com", true},
+		{ActionNetwork, "github.com", false}, // *.github.com is subdomains only
+		{ActionNetwork, "evilgithub.com", false},
+		{ActionNetwork, "github.com.evil.io", false},
+		{ActionNetwork, "api.example.com:443", true},
+		{ActionNetwork, "api.example.com:80", false},
+		{ActionNetwork, "pypi.org", false},
+		{ActionNetwork, "*", false}, // "any host" is not allowed by a list
+		{ActionNetwork, "", false},
+	})
+	for _, bad := range []string{"https://x.com", "x.com/path", "*", "*.", "a b", "evil.com;rm"} {
+		if _, err := Parse([]byte("role: n\nnetwork:\n  enabled: true\n  allow: ['" + bad + "']\n")); err == nil {
+			t.Errorf("network.allow %q accepted", bad)
+		}
+	}
+}
+
 func TestNetwork(t *testing.T) {
 	root := newWorkspace(t)
 	run(t, newEngine(t, developerYAML, root), []tc{{ActionNetwork, "registry.npmjs.org", false}})
